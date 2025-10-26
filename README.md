@@ -1,4 +1,4 @@
-# Photo Deleter - Image Swiper
+# Photo Deleter - Image Sorter
 
 A simple desktop application built with Python and PyQt5 for quickly sorting images from a folder into "kept" and "deleted" subdirectories. It provides a match-like interface for quickly making decisions on a large number of photos.
 
