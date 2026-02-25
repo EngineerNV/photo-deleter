@@ -7,28 +7,31 @@ from backend import ImageBackend
 
 
 PALETTE = {
-    "bg_base": "#040714",
-    "bg_mid": "#1a2055",
-    "bg_end": "#08243e",
-    "panel_bg": "rgba(8, 10, 26, 0.88)",
-    "panel_border": "rgba(121, 233, 255, 0.30)",
-    "text_primary": "#f6fbff",
-    "text_secondary": "#cadbf1",
-    "text_muted": "rgba(236, 246, 255, 0.72)",
-    "accent_cyan": "#79e9ff",
-    "accent_magenta": "#ff4ecf",
+    "bg_base": "#130c28",
+    "bg_mid": "#422a75",
+    "bg_end": "#2d74b5",
+    "panel_bg": "rgba(38, 25, 77, 0.78)",
+    "panel_border": "rgba(133, 234, 255, 0.52)",
+    "text_primary": "#fef6ff",
+    "text_secondary": "#d8e8ff",
+    "text_muted": "rgba(246, 235, 255, 0.84)",
+    "accent_cyan": "#7be8ff",
+    "accent_magenta": "#f883ff",
+    "accent_lilac": "#b8a7ff",
+    "accent_pink": "#ff8dd0",
+    "ink_dark": "#1a0f31",
     "keep": "#1de8b1",
     "keep_hover": "#16bf90",
-    "delete": "#ff5f6d",
-    "delete_hover": "#de4957",
-    "skip": "#ffba49",
-    "skip_hover": "#dc9f37",
-    "undo": "#4d8fff",
-    "undo_hover": "#3f76d0",
+    "delete": "#ff7ca8",
+    "delete_hover": "#e66996",
+    "skip": "#ffd06f",
+    "skip_hover": "#e7b95d",
+    "undo": "#7db2ff",
+    "undo_hover": "#6799e4",
 }
 
-BODY_FONT_CANDIDATES = ["Trebuchet MS", "Helvetica Neue", "Arial"]
-TITLE_FONT_CANDIDATES = ["Trebuchet MS", "Avenir Next", "Helvetica Neue", "Arial"]
+BODY_FONT_CANDIDATES = ["Verdana", "Trebuchet MS", "Helvetica Neue", "Arial"]
+TITLE_FONT_CANDIDATES = ["Impact", "Trebuchet MS", "Avenir Next", "Helvetica Neue", "Arial"]
 
 
 def pick_font(candidates):
@@ -83,9 +86,10 @@ class ImageCard(QtWidgets.QFrame):
         self.setStyleSheet(
             f"""
             #imageCard {{
-                background: rgba(10, 12, 28, 0.92);
-                border-radius: 18px;
-                border: 1px solid {PALETTE["panel_border"]};
+                background: qlineargradient(spread:pad, x1:0, y1:0, x2:1, y2:1,
+                    stop:0 rgba(31, 17, 64, 0.97), stop:0.46 rgba(72, 45, 138, 0.94), stop:1 rgba(36, 101, 170, 0.92));
+                border-radius: 22px;
+                border: 2px solid {PALETTE["panel_border"]};
             }}
             """
         )
@@ -100,6 +104,7 @@ class ImageCard(QtWidgets.QFrame):
             f"""
             color: {PALETTE["text_muted"]};
             font-size: 18px;
+            font-weight: 600;
             """
         )
         self.pixmap_label.setMinimumHeight(260)
@@ -145,15 +150,16 @@ class ImageSwiper(QtWidgets.QWidget):
             font-family: "{self.body_font}";
         }}
         #statusChip {{
-            border-radius: 12px;
-            padding: 6px 14px;
+            border-radius: 14px;
+            padding: 7px 16px;
             color: {PALETTE["text_primary"]};
             border: 1px solid rgba(255, 255, 255, 0.22);
+            font-weight: 700;
         }}
         #metaStrip {{
             background: {PALETTE["panel_bg"]};
-            border: 1px solid {PALETTE["panel_border"]};
-            border-radius: 14px;
+            border: 2px solid {PALETTE["panel_border"]};
+            border-radius: 16px;
         }}
         #fileLabel {{
             font-size: 17px;
@@ -166,22 +172,56 @@ class ImageSwiper(QtWidgets.QWidget):
         QProgressBar {{
             border-radius: 6px;
             background: rgba(255, 255, 255, 0.10);
+            border: 1px solid rgba(255, 255, 255, 0.22);
         }}
         QProgressBar::chunk {{
             border-radius: 6px;
             background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
                 stop:0 {PALETTE["accent_cyan"]}, stop:1 {PALETTE["accent_magenta"]});
         }}
+        #windowPanel {{
+            background: rgba(16, 10, 34, 0.34);
+            border: 2px solid rgba(255, 255, 255, 0.24);
+            border-radius: 18px;
+        }}
+        #windowChrome {{
+            background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+                stop:0 rgba(250, 163, 236, 0.62), stop:1 rgba(120, 234, 255, 0.52));
+            border-radius: 12px;
+            border: 1px solid rgba(255, 255, 255, 0.28);
+        }}
+        #chromeMark {{
+            min-width: 14px;
+            max-width: 14px;
+            min-height: 14px;
+            max-height: 14px;
+            border: 1px solid rgba(20, 15, 43, 0.34);
+            border-radius: 3px;
+            background: rgba(255, 255, 255, 0.44);
+            color: rgba(20, 15, 43, 0.72);
+            font-size: 10px;
+            font-weight: 900;
+        }}
+        #accentBadge {{
+            background: rgba(16, 22, 47, 0.57);
+            border: 1px solid rgba(255, 255, 255, 0.28);
+            border-radius: 10px;
+            padding: 4px 10px;
+            color: {PALETTE["text_primary"]};
+            font-size: 11px;
+            font-weight: 700;
+            letter-spacing: 1px;
+        }}
         """
 
     def _button_style(self, base: str, hover: str) -> str:
         return f"""
         QPushButton {{
-            border-radius: 12px;
+            border-radius: 14px;
             background-color: {base};
-            color: #05131d;
+            color: {PALETTE["ink_dark"]};
             font-weight: 700;
-            border: none;
+            border: 1px solid rgba(255, 255, 255, 0.32);
             padding: 0 12px;
         }}
         QPushButton:hover {{
@@ -199,33 +239,42 @@ class ImageSwiper(QtWidgets.QWidget):
 
     def _set_status(self, text: str, tone: str):
         styles = {
-            "info": "background: rgba(91, 108, 148, 0.30);",
-            "active": "background: rgba(71, 196, 255, 0.24); border-color: rgba(121, 233, 255, 0.56);",
-            "success": "background: rgba(47, 239, 170, 0.24); border-color: rgba(45, 229, 162, 0.58);",
-            "error": "background: rgba(255, 93, 117, 0.25); border-color: rgba(255, 130, 141, 0.58);",
+            "info": "background: rgba(169, 125, 252, 0.28);",
+            "active": "background: rgba(83, 218, 255, 0.26); border-color: rgba(151, 238, 255, 0.62);",
+            "success": "background: rgba(94, 247, 186, 0.26); border-color: rgba(125, 243, 197, 0.66);",
+            "error": "background: rgba(255, 124, 172, 0.28); border-color: rgba(255, 176, 204, 0.66);",
         }
         self.status_chip.setText(text)
         self.status_chip.setStyleSheet(styles.get(tone, styles["info"]))
 
     def _build_ui(self):
-        headline = QtWidgets.QLabel("Photo Deleter")
+        headline = QtWidgets.QLabel("PHOTO DELETER")
         headline.setStyleSheet(
             f"""
-            font-size: 34px;
+            font-size: 33px;
             font-weight: 700;
             color: {PALETTE["text_primary"]};
-            letter-spacing: 1px;
+            letter-spacing: 2px;
             font-family: "{self.title_font}";
             """
         )
 
-        tagline = QtWidgets.QLabel("Flash through your folders, keep the sparks, delete the noise.")
-        tagline.setStyleSheet(f"font-size: 14px; color: {PALETTE['text_secondary']};")
+        tagline = QtWidgets.QLabel("Sort photos quickly with keyboard shortcuts and one-click actions.")
+        tagline.setStyleSheet(f"font-size: 13px; color: {PALETTE['text_secondary']}; font-weight: 600;")
 
         header_layout = QtWidgets.QVBoxLayout()
-        header_layout.setSpacing(2)
+        header_layout.setSpacing(1)
         header_layout.addWidget(headline)
         header_layout.addWidget(tagline)
+
+        badges_layout = QtWidgets.QHBoxLayout()
+        badges_layout.setSpacing(8)
+        for label in ["SHORTCUTS: ARROWS", "SPACE: SKIP", "CTRL+Z: UNDO"]:
+            badge = QtWidgets.QLabel(label)
+            badge.setObjectName("accentBadge")
+            badges_layout.addWidget(badge)
+        badges_layout.addStretch()
+        header_layout.addLayout(badges_layout)
 
         self.status_chip = QtWidgets.QLabel("Waiting for folder ...")
         self.status_chip.setObjectName("statusChip")
@@ -236,6 +285,21 @@ class ImageSwiper(QtWidgets.QWidget):
         header_row.setSpacing(14)
         header_row.addLayout(header_layout, stretch=1)
         header_row.addWidget(self.status_chip)
+
+        chrome = QtWidgets.QFrame()
+        chrome.setObjectName("windowChrome")
+        chrome_layout = QtWidgets.QHBoxLayout(chrome)
+        chrome_layout.setContentsMargins(10, 6, 10, 6)
+        chrome_layout.setSpacing(8)
+        for _ in range(1):
+            mark = QtWidgets.QLabel("X")
+            mark.setObjectName("chromeMark")
+            mark.setAlignment(QtCore.Qt.AlignCenter)
+            chrome_layout.addWidget(mark)
+        chrome_text = QtWidgets.QLabel("session panel")
+        chrome_text.setStyleSheet(f"color: {PALETTE['ink_dark']}; font-size: 11px; font-weight: 700;")
+        chrome_layout.addWidget(chrome_text)
+        chrome_layout.addStretch()
 
         self.image_card = ImageCard()
 
@@ -277,7 +341,7 @@ class ImageSwiper(QtWidgets.QWidget):
         controls_layout.addWidget(self.keep_button, stretch=1)
         controls_layout.addWidget(self.undo_button, stretch=1)
 
-        choose_button = QtWidgets.QPushButton("Choose Directory")
+        choose_button = QtWidgets.QPushButton("Load Folder")
         choose_button.setMinimumWidth(210)
         choose_button.setFixedHeight(42)
         choose_button.setCursor(QtCore.Qt.PointingHandCursor)
@@ -287,14 +351,14 @@ class ImageSwiper(QtWidgets.QWidget):
                 border-radius: 12px;
                 padding: 10px 14px;
                 background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
-                    stop:0 #79e9ff, stop:1 #ff4ecf);
-                color: #02040d;
+                    stop:0 #7be8ff, stop:0.53 #bba8ff, stop:1 #ff8bd6);
+                color: #140f2b;
                 font-weight: 700;
-                border: none;
+                border: 1px solid rgba(255, 255, 255, 0.4);
             }
             QPushButton:hover {
                 background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
-                    stop:0 #8ef5ff, stop:1 #ff79de);
+                    stop:0 #98f2ff, stop:0.53 #cab9ff, stop:1 #fface2);
             }
             QPushButton:pressed {
                 padding-top: 11px;
@@ -309,7 +373,7 @@ class ImageSwiper(QtWidgets.QWidget):
         self.progress_bar.setTextVisible(False)
 
         self.progress_label = QtWidgets.QLabel("0 / 0 images sorted")
-        self.progress_label.setStyleSheet(f"color: {PALETTE['text_secondary']}; font-size: 12px;")
+        self.progress_label.setStyleSheet(f"color: {PALETTE['text_secondary']}; font-size: 12px; font-weight: 600;")
 
         progress_layout = QtWidgets.QVBoxLayout()
         progress_layout.setSpacing(6)
@@ -324,14 +388,21 @@ class ImageSwiper(QtWidgets.QWidget):
         footer_layout.addStretch()
         footer_layout.addLayout(progress_layout)
 
+        panel = QtWidgets.QFrame()
+        panel.setObjectName("windowPanel")
+        panel_layout = QtWidgets.QVBoxLayout(panel)
+        panel_layout.setContentsMargins(16, 14, 16, 14)
+        panel_layout.setSpacing(12)
+        panel_layout.addWidget(chrome)
+        panel_layout.addLayout(header_row)
+        panel_layout.addWidget(self.image_card, stretch=1)
+        panel_layout.addWidget(info_strip)
+        panel_layout.addLayout(controls_layout)
+        panel_layout.addLayout(footer_layout)
+
         main_layout = QtWidgets.QVBoxLayout(self)
         main_layout.setContentsMargins(22, 20, 22, 20)
-        main_layout.setSpacing(16)
-        main_layout.addLayout(header_row)
-        main_layout.addWidget(self.image_card, stretch=1)
-        main_layout.addWidget(info_strip)
-        main_layout.addLayout(controls_layout)
-        main_layout.addLayout(footer_layout)
+        main_layout.addWidget(panel)
 
         self.keep_button.clicked.connect(self.keep_current)
         self.delete_button.clicked.connect(self.delete_current)
