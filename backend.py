@@ -106,3 +106,66 @@ class ImageBackend:
 
     def remaining_count(self) -> int:
         return len(self._images)
+
+    def get_kept_files(self) -> List[str]:
+        """Return list of filenames currently in the kept/ directory."""
+        if not os.path.isdir(self.kept_dir):
+            return []
+        return sorted(
+            f for f in os.listdir(self.kept_dir)
+            if os.path.isfile(os.path.join(self.kept_dir, f))
+        )
+
+    def get_deleted_files(self) -> List[str]:
+        """Return list of filenames currently in the deleted/ directory."""
+        if not os.path.isdir(self.deleted_dir):
+            return []
+        return sorted(
+            f for f in os.listdir(self.deleted_dir)
+            if os.path.isfile(os.path.join(self.deleted_dir, f))
+        )
+
+    def finish_delete(self) -> int:
+        """Permanently remove all files in the deleted/ folder.
+
+        Returns the number of files removed.
+        """
+        count = 0
+        if not os.path.isdir(self.deleted_dir):
+            return count
+        for fname in os.listdir(self.deleted_dir):
+            fpath = os.path.join(self.deleted_dir, fname)
+            if os.path.isfile(fpath):
+                try:
+                    os.remove(fpath)
+                    count += 1
+                except Exception as exc:
+                    print(f"Could not delete {fpath}: {exc}")
+        try:
+            os.rmdir(self.deleted_dir)
+        except OSError:
+            pass
+        return count
+
+    def finish_restore_kept(self) -> int:
+        """Move all kept files back to the source directory.
+
+        Returns the number of files restored.
+        """
+        count = 0
+        if not os.path.isdir(self.kept_dir):
+            return count
+        for fname in os.listdir(self.kept_dir):
+            src = os.path.join(self.kept_dir, fname)
+            if os.path.isfile(src):
+                dest = self._resolve_unique_destination(self.images_dir, fname)
+                try:
+                    shutil.move(src, dest)
+                    count += 1
+                except Exception as exc:
+                    print(f"Could not restore {src}: {exc}")
+        try:
+            os.rmdir(self.kept_dir)
+        except OSError:
+            pass
+        return count

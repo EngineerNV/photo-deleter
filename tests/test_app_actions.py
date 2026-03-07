@@ -81,6 +81,47 @@ class AppActionTests(unittest.TestCase):
             self.assertTrue(source.exists())
             self.assertEqual(len(swiper.history), 0)
 
+    def test_stat_counters_update(self):
+        qapp = get_qapp()
+        self.assertIsNotNone(qapp)
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            for name in ("a.png", "b.png", "c.png"):
+                write_fake_image(tmp_path / name)
+
+            swiper = ImageSwiper()
+            swiper.backend = ImageBackend(str(tmp_path))
+            swiper.current_index = 0
+            swiper.current_path = str(tmp_path / "a.png")
+
+            swiper.keep_current()
+            self.assertEqual(swiper.kept_count, 1)
+
+            swiper.current_path = str(tmp_path / "b.png")
+            swiper.delete_current()
+            self.assertEqual(swiper.deleted_count, 1)
+
+            swiper.current_path = str(tmp_path / "c.png")
+            swiper.skip_current()
+            self.assertEqual(swiper.skipped_count, 1)
+
+    def test_finish_button_shown_when_complete(self):
+        qapp = get_qapp()
+        self.assertIsNotNone(qapp)
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            write_fake_image(tmp_path / "only.png")
+
+            swiper = ImageSwiper()
+            swiper.backend = ImageBackend(str(tmp_path))
+            self.assertTrue(swiper.finish_button.isHidden())
+
+            swiper.current_index = 0
+            swiper.current_path = str(tmp_path / "only.png")
+            swiper.keep_current()
+            # After the last image is sorted, finish button should no longer be hidden
+            self.assertFalse(swiper.finish_button.isHidden())
+
 
 if __name__ == "__main__":
     unittest.main()
