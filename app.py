@@ -197,6 +197,9 @@ class SoundManager:
             pass
 
     # -- wav generation ------------------------------------------------
+    _AMPLITUDE_SCALE = 0.25
+    _ENVELOPE_FADE_S = 0.003  # seconds for attack / release ramp
+
     def _make_wav(self, name: str, notes: list) -> str:
         rate = 22050
         frames = bytearray()
@@ -204,10 +207,10 @@ class SoundManager:
             n = int(rate * ms / 1000)
             for i in range(n):
                 t = i / rate
-                env = min(1.0, i / max(1, rate * 0.003)) * min(
-                    1.0, (n - i) / max(1, rate * 0.003)
+                env = min(1.0, i / max(1, rate * self._ENVELOPE_FADE_S)) * min(
+                    1.0, (n - i) / max(1, rate * self._ENVELOPE_FADE_S)
                 )
-                val = int(0.25 * env * math.sin(2 * math.pi * freq * t) * 32767)
+                val = int(self._AMPLITUDE_SCALE * env * math.sin(2 * math.pi * freq * t) * 32767)
                 frames.extend(struct.pack("<h", max(-32767, min(32767, val))))
         path = os.path.join(self._tmp_dir, f"{name}.wav")
         with wave.open(path, "w") as wf:
@@ -867,12 +870,12 @@ class ImageSwiper(QtWidgets.QWidget):
         start = QtCore.QPoint(mapped.x() - 45, mapped.y() - 45)
         FloatingReaction(self, emoji, start)
 
-    _card_original_ss: str = ""
+    _card_original_stylesheet: str = ""
 
     def _flash_card(self, color: str):
         """Briefly highlight the image-card border."""
-        if not self._card_original_ss:
-            self._card_original_ss = self.image_card.styleSheet()
+        if not self._card_original_stylesheet:
+            self._card_original_stylesheet = self.image_card.styleSheet()
         flash = f"""
         #imageCard {{
             background: qlineargradient(spread:pad, x1:0, y1:0, x2:1, y2:1,
@@ -884,7 +887,7 @@ class ImageSwiper(QtWidgets.QWidget):
         """
         self.image_card.setStyleSheet(flash)
         QtCore.QTimer.singleShot(
-            280, lambda: self.image_card.setStyleSheet(self._card_original_ss)
+            280, lambda: self.image_card.setStyleSheet(self._card_original_stylesheet)
         )
 
     # -- finish dialog -------------------------------------------------
