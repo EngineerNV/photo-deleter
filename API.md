@@ -73,7 +73,6 @@ This file defines the behavior contract between `app.py` (UI/controller) and `ba
 - Backend methods do not raise expected operational errors to UI for normal flow.
 - Failure is represented by `None` return.
 - Backend may log errors for diagnostics.
-- TODO: migrate automated test runner documentation/execution flow from `unittest` to `pytest`.
 
 ## Non-Goals (Current Contract)
 - No permanent delete/trash integration.

@@ -60,10 +60,8 @@ The application window will open.
 Run automated tests (no manual UI clicking required):
 
 ```bash
-QT_QPA_PLATFORM=offscreen python -m unittest discover -s tests -p "test_*.py" -v
+pytest -q
 ```
-
-TODO: migrate the test runner and suite execution docs to `pytest` in a future update.
 
 ## Usage
 
