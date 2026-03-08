@@ -122,6 +122,28 @@ class AppActionTests(unittest.TestCase):
             # After the last image is sorted, finish button should no longer be hidden
             self.assertFalse(swiper.finish_button.isHidden())
 
+    def test_load_next_image_skips_unreadable_files(self):
+        qapp = get_qapp()
+        self.assertIsNotNone(qapp)
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            bad = tmp_path / "bad.png"
+            bad.write_text("not an image", encoding="utf-8")
+            good = tmp_path / "good.png"
+            write_fake_image(good)
+
+            swiper = ImageSwiper()
+            swiper.backend = ImageBackend(str(tmp_path))
+            swiper.current_index = -1
+
+            swiper.load_next_image()
+
+            self.assertEqual(swiper.current_path, str(good))
+            self.assertIn("good.png", swiper.file_label.text())
+            self.assertIn("Skipped unreadable file", swiper.action_label.text())
+            self.assertTrue(swiper.keep_button.isEnabled())
+
+
 
 if __name__ == "__main__":
     unittest.main()

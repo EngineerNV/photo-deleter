@@ -739,31 +739,30 @@ class ImageSwiper(QtWidgets.QWidget):
         if advance_index:
             self.current_index += 1
 
-        img_path = self.backend.get_image(self.current_index)
-        if not img_path:
-            self.image_card.set_message("\U0001F389 All images sorted!")
-            self._set_status("Complete", "success")
-            self.file_label.clear()
-            self.update_progress()
-            self.update_controls(False)
-            self.finish_button.show()
-            self.sound.play("finish")
-            return
+        while True:
+            img_path = self.backend.get_image(self.current_index)
+            if not img_path:
+                self.image_card.set_message("\U0001F389 All images sorted!")
+                self._set_status("Complete", "success")
+                self.file_label.clear()
+                self.update_progress()
+                self.update_controls(False)
+                self.finish_button.show()
+                self.sound.play("finish")
+                return
 
-        pixmap = QtGui.QPixmap(img_path)
-        if pixmap.isNull():
-            self.image_card.set_message(f"Could not load {os.path.basename(img_path)}")
-            self.file_label.setText("File might be corrupted.")
-            self._set_status("Image load failed", "error")
-            self.update_controls(False)
-            return
+            pixmap = QtGui.QPixmap(img_path)
+            if not pixmap.isNull():
+                self.current_path = img_path
+                self._apply_pixmap(pixmap)
+                self.file_label.setText(os.path.basename(img_path))
+                self._set_status("Ready", "active")
+                self.update_progress()
+                self.update_controls(True)
+                return
 
-        self.current_path = img_path
-        self._apply_pixmap(pixmap)
-        self.file_label.setText(os.path.basename(img_path))
-        self._set_status("Ready", "active")
-        self.update_progress()
-        self.update_controls(True)
+            self.action_label.setText(f"Skipped unreadable file: {os.path.basename(img_path)}")
+            self.current_index += 1
 
     def _apply_pixmap(self, pixmap: QtGui.QPixmap):
         self.image_card.set_image(pixmap)
