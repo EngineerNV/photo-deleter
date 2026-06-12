@@ -1,7 +1,15 @@
 # Photo Deleter API Contract
 
 ## Purpose
-This file defines the behavior contract between `app.py` (UI/controller) and `backend.py` (file operations + image list state).
+This file defines the behavior contract between the frontend (`app.py` controller plus the `widgets.py` / `theme.py` / `sounds.py` presentation modules) and `backend.py` (file operations + image list state). The backend is intentionally UI-agnostic and has no PyQt dependency on its move/undo logic, which keeps it unit-testable in isolation.
+
+## Frontend Module Split
+- `app.py` — `ImageSwiper` window/controller: session flow, keyboard/drag-drop, calls into the backend.
+- `widgets.py` — reusable view components, none of which touch the filesystem:
+  - `SwipeDeck` — gesture card stack. Emits `swiped("keep"|"delete")` and `inspect_requested()`. The controller, not the widget, performs the file move.
+  - `Toast`, `FloatingEmoji`, `FullscreenViewer` — transient feedback and the zoom/pan inspector.
+- `theme.py` — palette, font selection, and stylesheet builders (pure strings).
+- `sounds.py` — `SoundManager`, runtime-synthesized WAV cues; degrades silently and supports muting.
 
 ## Domain Model
 - `source_dir`: user-selected directory that contains sortable images.
@@ -52,6 +60,18 @@ This file defines the behavior contract between `app.py` (UI/controller) and `ba
 
 8. `total_images` (property) -> `int`
 - Original session image count.
+
+9. `get_kept_files() -> List[str]` / `get_deleted_files() -> List[str]`
+- Sorted filenames currently present in `kept_dir` / `deleted_dir`.
+- Used to populate the Finish dialog summary.
+
+10. `finish_delete() -> int`
+- Permanently removes every file in `deleted_dir`, then removes the (now empty) directory.
+- Returns the number of files removed. Irreversible.
+
+11. `finish_restore_kept() -> int`
+- Moves every file in `kept_dir` back to `source_dir` (collision-safe), then removes the directory.
+- Returns the number of files restored.
 
 ## Move Semantics
 - Collision policy for all move operations:

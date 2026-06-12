@@ -1,231 +1,44 @@
-import math
+"""Photo Deleter — a swipe-to-sort photo triage app.
+
+Tinder-style mechanics: drag the card right to keep, left to delete,
+or use the round action buttons / keyboard. Built with PyQt5.
+"""
+
 import os
-import struct
 import sys
-import tempfile
-import wave
+from datetime import datetime
 
 from PyQt5 import QtCore, QtGui, QtWidgets
 
 from backend import ImageBackend
+from sounds import SoundManager
+from theme import (
+    PALETTE,
+    BODY_FONT_CANDIDATES,
+    TITLE_FONT_CANDIDATES,
+    app_stylesheet,
+    finish_button_style,
+    ghost_button_style,
+    pick_font,
+    primary_button_style,
+    round_action_style,
+)
+from widgets import FloatingEmoji, FullscreenViewer, SwipeDeck, Toast
 
-try:
-    from PyQt5.QtMultimedia import QSoundEffect  # noqa: F401
+MAX_DISPLAY_DIM = 1600
+MAX_PREVIEW_DIM = 900
 
-    _HAS_MULTIMEDIA = True
-except ImportError:
-    _HAS_MULTIMEDIA = False
-
-
-PALETTE = {
-    "bg_base": "#130c28",
-    "bg_mid": "#422a75",
-    "bg_end": "#2d74b5",
-    "panel_bg": "rgba(38, 25, 77, 0.78)",
-    "panel_border": "rgba(133, 234, 255, 0.52)",
-    "text_primary": "#fef6ff",
-    "text_secondary": "#d8e8ff",
-    "text_muted": "rgba(246, 235, 255, 0.84)",
-    "accent_cyan": "#7be8ff",
-    "accent_magenta": "#f883ff",
-    "accent_lilac": "#b8a7ff",
-    "accent_pink": "#ff8dd0",
-    "ink_dark": "#1a0f31",
-    "keep": "#1de8b1",
-    "keep_hover": "#16bf90",
-    "delete": "#ff7ca8",
-    "delete_hover": "#e66996",
-    "skip": "#ffd06f",
-    "skip_hover": "#e7b95d",
-    "undo": "#7db2ff",
-    "undo_hover": "#6799e4",
-}
-
-BODY_FONT_CANDIDATES = ["Verdana", "Trebuchet MS", "Helvetica Neue", "Arial"]
-TITLE_FONT_CANDIDATES = ["Impact", "Trebuchet MS", "Avenir Next", "Helvetica Neue", "Arial"]
+WELCOME_MESSAGE = "Drop a photo folder here\nor press  O  to open one"
+WELCOME_HINT = "Drag right to keep · drag left to delete · double-click to inspect"
 
 
-def pick_font(candidates):
-    available = set(QtGui.QFontDatabase().families())
-    for family in candidates:
-        if family in available:
-            return family
-    return "Sans Serif"
-
-
-class AspectRatioImageLabel(QtWidgets.QLabel):
-    def __init__(self, text: str = ""):
-        super().__init__(text)
-        self._source_pixmap = None
-        self.setAlignment(QtCore.Qt.AlignCenter)
-        self.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Expanding)
-        self.setScaledContents(False)
-
-    def set_source_pixmap(self, pixmap: QtGui.QPixmap):
-        self._source_pixmap = pixmap
-        super().setPixmap(QtGui.QPixmap())
-        super().setText("")
-        self.update()
-
-    def set_message(self, message: str):
-        self._source_pixmap = None
-        super().setPixmap(QtGui.QPixmap())
-        super().setText(message)
-        self.update()
-
-    def paintEvent(self, event):
-        if self._source_pixmap and not self._source_pixmap.isNull():
-            painter = QtGui.QPainter(self)
-            painter.setRenderHint(QtGui.QPainter.SmoothPixmapTransform, True)
-            rect = self.contentsRect()
-            scaled = self._source_pixmap.scaled(
-                rect.size(),
-                QtCore.Qt.KeepAspectRatio,
-                QtCore.Qt.SmoothTransformation,
-            )
-            x = rect.x() + (rect.width() - scaled.width()) // 2
-            y = rect.y() + (rect.height() - scaled.height()) // 2
-            painter.drawPixmap(x, y, scaled)
-            return
-        super().paintEvent(event)
-
-
-class ImageCard(QtWidgets.QFrame):
-    def __init__(self):
-        super().__init__()
-        self.setObjectName("imageCard")
-        self.setStyleSheet(
-            f"""
-            #imageCard {{
-                background: qlineargradient(spread:pad, x1:0, y1:0, x2:1, y2:1,
-                    stop:0 rgba(31, 17, 64, 0.97), stop:0.46 rgba(72, 45, 138, 0.94), stop:1 rgba(36, 101, 170, 0.92));
-                border-radius: 22px;
-                border: 2px solid {PALETTE["panel_border"]};
-            }}
-            """
-        )
-        self.setMinimumHeight(340)
-
-        shadow = QtWidgets.QGraphicsDropShadowEffect(blurRadius=34, xOffset=0, yOffset=18)
-        shadow.setColor(QtGui.QColor(0, 0, 0, 205))
-        self.setGraphicsEffect(shadow)
-
-        self.pixmap_label = AspectRatioImageLabel("Pick a directory to begin sorting.")
-        self.pixmap_label.setStyleSheet(
-            f"""
-            color: {PALETTE["text_muted"]};
-            font-size: 18px;
-            font-weight: 600;
-            """
-        )
-        self.pixmap_label.setMinimumHeight(260)
-
-        layout = QtWidgets.QVBoxLayout(self)
-        layout.setContentsMargins(24, 24, 24, 24)
-        layout.addWidget(self.pixmap_label)
-
-    def set_image(self, pixmap: QtGui.QPixmap):
-        self.pixmap_label.set_source_pixmap(pixmap)
-
-    def set_message(self, message: str):
-        self.pixmap_label.set_message(message)
-
-
-class FloatingReaction(QtWidgets.QLabel):
-    """Animated emoji that floats upward and fades out."""
-
-    def __init__(self, parent: QtWidgets.QWidget, emoji: str, start: QtCore.QPoint):
-        super().__init__(emoji, parent)
-        self.setAttribute(QtCore.Qt.WA_TransparentForMouseEvents)
-        self.setStyleSheet("font-size: 64px; background: transparent; border: none;")
-        self.setAlignment(QtCore.Qt.AlignCenter)
-        self.setFixedSize(90, 90)
-        self.move(start)
-
-        opacity_fx = QtWidgets.QGraphicsOpacityEffect(self)
-        self.setGraphicsEffect(opacity_fx)
-
-        group = QtCore.QParallelAnimationGroup(self)
-
-        pos_anim = QtCore.QPropertyAnimation(self, b"pos")
-        pos_anim.setDuration(900)
-        pos_anim.setStartValue(start)
-        pos_anim.setEndValue(QtCore.QPoint(start.x(), start.y() - 130))
-        pos_anim.setEasingCurve(QtCore.QEasingCurve.OutCubic)
-
-        fade_anim = QtCore.QPropertyAnimation(opacity_fx, b"opacity")
-        fade_anim.setDuration(900)
-        fade_anim.setStartValue(1.0)
-        fade_anim.setEndValue(0.0)
-        fade_anim.setEasingCurve(QtCore.QEasingCurve.InQuad)
-
-        group.addAnimation(pos_anim)
-        group.addAnimation(fade_anim)
-        group.finished.connect(self.deleteLater)
-
-        self.show()
-        self.raise_()
-        group.start()
-        self._group = group  # prevent garbage-collection
-
-
-class SoundManager:
-    """Generates short audio feedback tones.  Silently degrades when unavailable."""
-
-    def __init__(self):
-        self._effects: dict = {}
-        self._enabled = False
-        if not _HAS_MULTIMEDIA:
-            return
-        try:
-            self._tmp_dir = tempfile.mkdtemp(prefix="photo_deleter_sfx_")
-            melodies = {
-                "keep": [(523, 80), (659, 80), (784, 120)],
-                "delete": [(370, 120), (311, 160)],
-                "skip": [(440, 60)],
-                "undo": [(523, 60), (440, 80)],
-                "finish": [(523, 80), (659, 80), (784, 80), (1047, 200)],
-            }
-            for name, notes in melodies.items():
-                path = self._make_wav(name, notes)
-                effect = QSoundEffect()
-                effect.setSource(QtCore.QUrl.fromLocalFile(path))
-                effect.setVolume(0.4)
-                self._effects[name] = effect
-            self._enabled = True
-        except Exception:
-            pass
-
-    # -- wav generation ------------------------------------------------
-    _AMPLITUDE_SCALE = 0.25
-    _ENVELOPE_FADE_S = 0.003  # seconds for attack / release ramp
-
-    def _make_wav(self, name: str, notes: list) -> str:
-        rate = 22050
-        frames = bytearray()
-        for freq, ms in notes:
-            n = int(rate * ms / 1000)
-            for i in range(n):
-                t = i / rate
-                env = min(1.0, i / max(1, rate * self._ENVELOPE_FADE_S)) * min(
-                    1.0, (n - i) / max(1, rate * self._ENVELOPE_FADE_S)
-                )
-                val = int(self._AMPLITUDE_SCALE * env * math.sin(2 * math.pi * freq * t) * 32767)
-                frames.extend(struct.pack("<h", max(-32767, min(32767, val))))
-        path = os.path.join(self._tmp_dir, f"{name}.wav")
-        with wave.open(path, "w") as wf:
-            wf.setnchannels(1)
-            wf.setsampwidth(2)
-            wf.setframerate(rate)
-            wf.writeframes(bytes(frames))
-        return path
-
-    def play(self, name: str):
-        if self._enabled and name in self._effects:
-            try:
-                self._effects[name].play()
-            except Exception:
-                pass
+def human_size(num_bytes: int) -> str:
+    size = float(num_bytes)
+    for unit in ("B", "KB", "MB", "GB"):
+        if size < 1024 or unit == "GB":
+            return f"{size:.0f} {unit}" if unit == "B" else f"{size:.1f} {unit}"
+        size /= 1024
+    return f"{size:.1f} GB"
 
 
 class FinishDialog(QtWidgets.QDialog):
@@ -235,7 +48,7 @@ class FinishDialog(QtWidgets.QDialog):
         super().__init__(parent)
         self.setWindowTitle("Finish Session")
         self.setModal(True)
-        self.setMinimumSize(480, 360)
+        self.setMinimumSize(460, 340)
         self._kept = kept_files
         self._deleted = deleted_files
         self.delete_confirmed = False
@@ -245,25 +58,19 @@ class FinishDialog(QtWidgets.QDialog):
     def _build_ui(self):
         self.setStyleSheet(
             f"""
-            QDialog {{
-                background: qlineargradient(x1:0, y1:0, x2:0.5, y2:1,
-                    stop:0 {PALETTE["bg_base"]}, stop:1 {PALETTE["bg_mid"]});
-            }}
-            QLabel {{
-                color: {PALETTE["text_primary"]};
-                background: transparent;
-            }}
+            QDialog {{ background: {PALETTE["bg_top"]}; }}
+            QLabel {{ color: {PALETTE["text"]}; background: transparent; }}
             QCheckBox {{
-                color: {PALETTE["text_primary"]};
-                font-size: 14px;
+                color: {PALETTE["text"]};
+                font-size: 13px;
                 spacing: 10px;
                 background: transparent;
             }}
             QCheckBox::indicator {{
                 width: 20px; height: 20px;
-                border: 2px solid {PALETTE["accent_lilac"]};
-                border-radius: 4px;
-                background: rgba(255,255,255,0.08);
+                border: 2px solid {PALETTE["border_strong"]};
+                border-radius: 6px;
+                background: {PALETTE["surface"]};
             }}
             QCheckBox::indicator:checked {{
                 background: {PALETTE["keep"]};
@@ -274,32 +81,34 @@ class FinishDialog(QtWidgets.QDialog):
 
         lay = QtWidgets.QVBoxLayout(self)
         lay.setSpacing(14)
-        lay.setContentsMargins(30, 26, 30, 26)
+        lay.setContentsMargins(30, 28, 30, 26)
 
-        title = QtWidgets.QLabel("\U0001F389  Session Complete!")
-        title.setStyleSheet(f"font-size: 26px; font-weight: 700; color: {PALETTE['text_primary']};")
+        title = QtWidgets.QLabel("Session complete")
+        title.setStyleSheet("font-size: 22px; font-weight: 800;")
         title.setAlignment(QtCore.Qt.AlignCenter)
         lay.addWidget(title)
 
         summary = QtWidgets.QLabel(
-            f"\U0001F4CA  {len(self._kept)} kept  \u2022  {len(self._deleted)} marked for deletion"
+            f"{len(self._kept)} kept   ·   {len(self._deleted)} marked for deletion"
         )
-        summary.setStyleSheet(f"font-size: 14px; color: {PALETTE['text_secondary']};")
+        summary.setStyleSheet(
+            f"font-size: 13px; color: {PALETTE['text_secondary']}; font-weight: 600;"
+        )
         summary.setAlignment(QtCore.Qt.AlignCenter)
         summary.setWordWrap(True)
         lay.addWidget(summary)
 
-        lay.addSpacing(6)
+        lay.addSpacing(8)
 
         self.delete_check = QtWidgets.QCheckBox(
-            f"\U0001F5D1  Permanently delete {len(self._deleted)} photo(s)"
+            f"Permanently delete {len(self._deleted)} photo(s)"
         )
         self.delete_check.setChecked(bool(self._deleted))
         self.delete_check.setEnabled(bool(self._deleted))
         lay.addWidget(self.delete_check)
 
         self.restore_check = QtWidgets.QCheckBox(
-            f"\U0001F4C1  Restore {len(self._kept)} kept photo(s) to original folder"
+            f"Restore {len(self._kept)} kept photo(s) to the original folder"
         )
         self.restore_check.setChecked(bool(self._kept))
         self.restore_check.setEnabled(bool(self._kept))
@@ -307,8 +116,12 @@ class FinishDialog(QtWidgets.QDialog):
 
         lay.addSpacing(4)
 
-        warn = QtWidgets.QLabel("\u26A0\uFE0F  Deleted photos are permanently removed and cannot be recovered.")
-        warn.setStyleSheet(f"font-size: 12px; color: {PALETTE['delete']}; font-weight: 600;")
+        warn = QtWidgets.QLabel(
+            "Deleted photos are permanently removed and cannot be recovered."
+        )
+        warn.setStyleSheet(
+            f"font-size: 12px; color: {PALETTE['delete']}; font-weight: 700;"
+        )
         warn.setWordWrap(True)
         lay.addWidget(warn)
 
@@ -320,37 +133,13 @@ class FinishDialog(QtWidgets.QDialog):
         cancel = QtWidgets.QPushButton("Cancel")
         cancel.setFixedHeight(42)
         cancel.setCursor(QtCore.Qt.PointingHandCursor)
-        cancel.setStyleSheet(
-            f"""
-            QPushButton {{
-                border-radius: 12px;
-                background: rgba(255,255,255,0.12);
-                color: {PALETTE["text_primary"]};
-                font-weight: 700;
-                border: 1px solid rgba(255,255,255,0.25);
-                padding: 0 16px;
-            }}
-            QPushButton:hover {{ background: rgba(255,255,255,0.20); }}
-            """
-        )
+        cancel.setStyleSheet(ghost_button_style())
         cancel.clicked.connect(self.reject)
 
-        confirm = QtWidgets.QPushButton("\u2705  Confirm & Finish")
+        confirm = QtWidgets.QPushButton("Confirm && Finish")
         confirm.setFixedHeight(42)
         confirm.setCursor(QtCore.Qt.PointingHandCursor)
-        confirm.setStyleSheet(
-            f"""
-            QPushButton {{
-                border-radius: 12px;
-                background: {PALETTE["keep"]};
-                color: {PALETTE["ink_dark"]};
-                font-weight: 700;
-                border: 1px solid rgba(255,255,255,0.35);
-                padding: 0 16px;
-            }}
-            QPushButton:hover {{ background: {PALETTE["keep_hover"]}; }}
-            """
-        )
+        confirm.setStyleSheet(primary_button_style())
         confirm.clicked.connect(self._on_confirm)
 
         btn_row.addWidget(cancel, stretch=1)
@@ -374,351 +163,274 @@ class ImageSwiper(QtWidgets.QWidget):
         self.deleted_count = 0
         self.skipped_count = 0
 
+        self.settings = QtCore.QSettings("photo-deleter", "PhotoDeleter")
         self.body_font = pick_font(BODY_FONT_CANDIDATES)
         self.title_font = pick_font(TITLE_FONT_CANDIDATES)
-        self.sound = SoundManager()
+        self.sound = SoundManager(muted=self.settings.value("sound/muted", False, bool))
+
+        self._pixmap_cache = {}  # path -> display pixmap
+        self._progress_anim = None
 
         self.setWindowTitle("Photo Deleter")
-        self.setMinimumSize(900, 620)
+        self.setMinimumSize(880, 660)
         self.setObjectName("appRoot")
-        self.setStyleSheet(self._app_stylesheet())
+        self.setStyleSheet(app_stylesheet(self.body_font, self.title_font))
+        self.setAcceptDrops(True)
 
         self._build_ui()
         self._connect_shortcuts()
+        self._show_welcome()
 
-    def _app_stylesheet(self) -> str:
-        return f"""
-        #appRoot {{
-            background: qlineargradient(spread:pad, x1:0, y1:0, x2:1, y2:1,
-                stop:0 {PALETTE["bg_base"]}, stop:0.55 {PALETTE["bg_mid"]}, stop:1 {PALETTE["bg_end"]});
-        }}
-        QLabel {{
-            color: {PALETTE["text_primary"]};
-            font-family: "{self.body_font}";
-        }}
-        #statusChip {{
-            border-radius: 14px;
-            padding: 7px 16px;
-            color: {PALETTE["text_primary"]};
-            border: 1px solid rgba(255, 255, 255, 0.22);
-            font-weight: 700;
-        }}
-        #metaStrip {{
-            background: {PALETTE["panel_bg"]};
-            border: 2px solid {PALETTE["panel_border"]};
-            border-radius: 16px;
-        }}
-        #fileLabel {{
-            font-size: 17px;
-            font-weight: 600;
-        }}
-        #actionLabel {{
-            font-size: 12px;
-            color: {PALETTE["text_muted"]};
-        }}
-        QProgressBar {{
-            border-radius: 6px;
-            background: rgba(255, 255, 255, 0.10);
-            border: 1px solid rgba(255, 255, 255, 0.22);
-        }}
-        QProgressBar::chunk {{
-            border-radius: 6px;
-            background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
-                stop:0 {PALETTE["accent_cyan"]}, stop:1 {PALETTE["accent_magenta"]});
-        }}
-        #windowPanel {{
-            background: rgba(16, 10, 34, 0.34);
-            border: 2px solid rgba(255, 255, 255, 0.24);
-            border-radius: 18px;
-        }}
-        #windowChrome {{
-            background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
-                stop:0 rgba(250, 163, 236, 0.62), stop:1 rgba(120, 234, 255, 0.52));
-            border-radius: 12px;
-            border: 1px solid rgba(255, 255, 255, 0.28);
-        }}
-        #chromeMark {{
-            min-width: 14px;
-            max-width: 14px;
-            min-height: 14px;
-            max-height: 14px;
-            border: 1px solid rgba(20, 15, 43, 0.34);
-            border-radius: 3px;
-            background: rgba(255, 255, 255, 0.44);
-            color: rgba(20, 15, 43, 0.72);
-            font-size: 10px;
-            font-weight: 900;
-        }}
-        #accentBadge {{
-            background: rgba(16, 22, 47, 0.57);
-            border: 1px solid rgba(255, 255, 255, 0.28);
-            border-radius: 10px;
-            padding: 4px 10px;
-            color: {PALETTE["text_primary"]};
-            font-size: 11px;
-            font-weight: 700;
-            letter-spacing: 1px;
-        }}
-        """
-
-    def _button_style(self, base: str, hover: str) -> str:
-        return f"""
-        QPushButton {{
-            border-radius: 14px;
-            background-color: {base};
-            color: {PALETTE["ink_dark"]};
-            font-weight: 700;
-            border: 1px solid rgba(255, 255, 255, 0.32);
-            padding: 0 12px;
-        }}
-        QPushButton:hover {{
-            background-color: {hover};
-        }}
-        QPushButton:pressed {{
-            background-color: {hover};
-            padding-top: 1px;
-        }}
-        QPushButton:disabled {{
-            background-color: rgba(255, 255, 255, 0.16);
-            color: rgba(255, 255, 255, 0.5);
-        }}
-        """
-
-    def _set_status(self, text: str, tone: str):
-        styles = {
-            "info": "background: rgba(169, 125, 252, 0.28);",
-            "active": "background: rgba(83, 218, 255, 0.26); border-color: rgba(151, 238, 255, 0.62);",
-            "success": "background: rgba(94, 247, 186, 0.26); border-color: rgba(125, 243, 197, 0.66);",
-            "error": "background: rgba(255, 124, 172, 0.28); border-color: rgba(255, 176, 204, 0.66);",
-        }
-        self.status_chip.setText(text)
-        self.status_chip.setStyleSheet(styles.get(tone, styles["info"]))
+    # -- UI construction ----------------------------------------------------
 
     def _build_ui(self):
-        headline = QtWidgets.QLabel("PHOTO DELETER")
-        headline.setStyleSheet(
-            f"""
-            font-size: 33px;
-            font-weight: 700;
-            color: {PALETTE["text_primary"]};
-            letter-spacing: 2px;
-            font-family: "{self.title_font}";
-            """
-        )
+        # Top bar -------------------------------------------------------
+        title = QtWidgets.QLabel("Photo Deleter")
+        title.setObjectName("appTitle")
 
-        tagline = QtWidgets.QLabel("Sort photos quickly with keyboard shortcuts and one-click actions.")
-        tagline.setStyleSheet(f"font-size: 13px; color: {PALETTE['text_secondary']}; font-weight: 600;")
+        self.folder_chip = QtWidgets.QLabel("No folder")
+        self.folder_chip.setObjectName("folderChip")
 
-        header_layout = QtWidgets.QVBoxLayout()
-        header_layout.setSpacing(1)
-        header_layout.addWidget(headline)
-        header_layout.addWidget(tagline)
-
-        badges_layout = QtWidgets.QHBoxLayout()
-        badges_layout.setSpacing(8)
-        for label in ["SHORTCUTS: ARROWS", "SPACE: SKIP", "CTRL+Z: UNDO"]:
-            badge = QtWidgets.QLabel(label)
-            badge.setObjectName("accentBadge")
-            badges_layout.addWidget(badge)
-        badges_layout.addStretch()
-        header_layout.addLayout(badges_layout)
-
-        self.status_chip = QtWidgets.QLabel("Waiting for folder ...")
+        self.status_chip = QtWidgets.QLabel("")
         self.status_chip.setObjectName("statusChip")
-        self.status_chip.setMinimumWidth(210)
-        self._set_status("Waiting for folder ...", "info")
+        self._set_status("Waiting for folder", "info")
 
-        header_row = QtWidgets.QHBoxLayout()
-        header_row.setSpacing(14)
-        header_row.addLayout(header_layout, stretch=1)
-        header_row.addWidget(self.status_chip)
+        self.mute_button = QtWidgets.QPushButton(self._mute_glyph())
+        self.mute_button.setFixedSize(38, 38)
+        self.mute_button.setCursor(QtCore.Qt.PointingHandCursor)
+        self.mute_button.setToolTip("Toggle sound (M)")
+        self.mute_button.setStyleSheet(ghost_button_style())
+        self.mute_button.clicked.connect(self.toggle_mute)
 
-        chrome = QtWidgets.QFrame()
-        chrome.setObjectName("windowChrome")
-        chrome_layout = QtWidgets.QHBoxLayout(chrome)
-        chrome_layout.setContentsMargins(10, 6, 10, 6)
-        chrome_layout.setSpacing(8)
-        for _ in range(1):
-            mark = QtWidgets.QLabel("X")
-            mark.setObjectName("chromeMark")
-            mark.setAlignment(QtCore.Qt.AlignCenter)
-            chrome_layout.addWidget(mark)
-        chrome_text = QtWidgets.QLabel("session panel")
-        chrome_text.setStyleSheet(f"color: {PALETTE['ink_dark']}; font-size: 11px; font-weight: 700;")
-        chrome_layout.addWidget(chrome_text)
-        chrome_layout.addStretch()
+        open_button = QtWidgets.QPushButton("Open Folder")
+        open_button.setCursor(QtCore.Qt.PointingHandCursor)
+        open_button.setToolTip("Choose a folder of photos (O)")
+        open_button.setStyleSheet(primary_button_style())
+        open_button.clicked.connect(self.choose_directory)
 
-        self.image_card = ImageCard()
+        top_bar = QtWidgets.QHBoxLayout()
+        top_bar.setSpacing(10)
+        top_bar.addWidget(title)
+        top_bar.addWidget(self.folder_chip)
+        top_bar.addStretch()
+        top_bar.addWidget(self.status_chip)
+        top_bar.addWidget(self.mute_button)
+        top_bar.addWidget(open_button)
 
+        # Swipe deck ------------------------------------------------------
+        self.deck = SwipeDeck()
+        self.deck.swiped.connect(self._on_deck_swiped)
+        self.deck.inspect_requested.connect(self.open_fullscreen)
+
+        # Meta strip ------------------------------------------------------
         self.file_label = QtWidgets.QLabel("")
         self.file_label.setObjectName("fileLabel")
         self.file_label.setWordWrap(True)
 
-        self.action_label = QtWidgets.QLabel("Last action: none yet.")
+        self.meta_label = QtWidgets.QLabel("")
+        self.meta_label.setObjectName("metaLabel")
+
+        self.action_label = QtWidgets.QLabel("No actions yet.")
         self.action_label.setObjectName("actionLabel")
 
-        info_strip = QtWidgets.QFrame()
-        info_strip.setObjectName("metaStrip")
-        info_layout = QtWidgets.QVBoxLayout(info_strip)
-        info_layout.setContentsMargins(16, 12, 16, 12)
-        info_layout.setSpacing(4)
-        info_layout.addWidget(self.file_label)
-        info_layout.addWidget(self.action_label)
+        meta_strip = QtWidgets.QFrame()
+        meta_strip.setObjectName("metaStrip")
+        meta_layout = QtWidgets.QVBoxLayout(meta_strip)
+        meta_layout.setContentsMargins(16, 10, 16, 10)
+        meta_layout.setSpacing(2)
+        meta_layout.addWidget(self.file_label)
+        meta_layout.addWidget(self.meta_label)
+        meta_layout.addWidget(self.action_label)
 
-        self.keep_button = QtWidgets.QPushButton("Keep")
-        self.delete_button = QtWidgets.QPushButton("Delete")
-        self.skip_button = QtWidgets.QPushButton("Skip")
-        self.undo_button = QtWidgets.QPushButton("Undo")
-
-        buttons = [
-            (self.keep_button, PALETTE["keep"], PALETTE["keep_hover"]),
-            (self.delete_button, PALETTE["delete"], PALETTE["delete_hover"]),
-            (self.skip_button, PALETTE["skip"], PALETTE["skip_hover"]),
-            (self.undo_button, PALETTE["undo"], PALETTE["undo_hover"]),
-        ]
-        for button, base, hover in buttons:
-            button.setFixedHeight(48)
-            button.setCursor(QtCore.Qt.PointingHandCursor)
-            button.setStyleSheet(self._button_style(base, hover))
-
-        controls_layout = QtWidgets.QHBoxLayout()
-        controls_layout.setSpacing(12)
-        controls_layout.addWidget(self.delete_button, stretch=1)
-        controls_layout.addWidget(self.skip_button, stretch=1)
-        controls_layout.addWidget(self.keep_button, stretch=1)
-        controls_layout.addWidget(self.undo_button, stretch=1)
-
-        # -- Finish button (hidden until session is complete) ----------
-        self.finish_button = QtWidgets.QPushButton("\U0001F3C1  Finish")
-        self.finish_button.setFixedHeight(48)
-        self.finish_button.setCursor(QtCore.Qt.PointingHandCursor)
-        self.finish_button.setStyleSheet(
-            f"""
-            QPushButton {{
-                border-radius: 14px;
-                background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
-                    stop:0 {PALETTE["accent_cyan"]}, stop:0.5 {PALETTE["accent_magenta"]},
-                    stop:1 {PALETTE["accent_pink"]});
-                color: {PALETTE["ink_dark"]};
-                font-weight: 700;
-                font-size: 15px;
-                border: 2px solid rgba(255,255,255,0.45);
-                padding: 0 18px;
-            }}
-            QPushButton:hover {{
-                border-color: rgba(255,255,255,0.75);
-            }}
-            QPushButton:pressed {{
-                padding-top: 1px;
-            }}
-            """
+        # Round action buttons (Tinder-style) ----------------------------
+        self.undo_button = self._round_button(
+            "↺", PALETTE["undo"], PALETTE["undo_hover"], 52, "Undo last action (Ctrl+Z)"
         )
+        self.delete_button = self._round_button(
+            "✕", PALETTE["delete"], PALETTE["delete_hover"], 64, "Delete — move to deleted/ (←)"
+        )
+        self.skip_button = self._round_button(
+            "»", PALETTE["skip"], PALETTE["skip_hover"], 52, "Skip for now (Space)"
+        )
+        self.keep_button = self._round_button(
+            "♥", PALETTE["keep"], PALETTE["keep_hover"], 64, "Keep — move to kept/ (→)"
+        )
+
+        actions_row = QtWidgets.QHBoxLayout()
+        actions_row.setSpacing(18)
+        actions_row.addStretch()
+        actions_row.addWidget(self.undo_button)
+        actions_row.addWidget(self.delete_button)
+        actions_row.addWidget(self.skip_button)
+        actions_row.addWidget(self.keep_button)
+        actions_row.addStretch()
+
+        # Finish button (hidden until session is complete) ---------------
+        self.finish_button = QtWidgets.QPushButton("Finish session")
+        self.finish_button.setCursor(QtCore.Qt.PointingHandCursor)
+        self.finish_button.setStyleSheet(finish_button_style())
         self.finish_button.clicked.connect(self._show_finish_dialog)
         self.finish_button.hide()
 
-        choose_button = QtWidgets.QPushButton("Load Folder")
-        choose_button.setMinimumWidth(210)
-        choose_button.setFixedHeight(42)
-        choose_button.setCursor(QtCore.Qt.PointingHandCursor)
-        choose_button.setStyleSheet(
-            """
-            QPushButton {
-                border-radius: 12px;
-                padding: 10px 14px;
-                background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
-                    stop:0 #7be8ff, stop:0.53 #bba8ff, stop:1 #ff8bd6);
-                color: #140f2b;
-                font-weight: 700;
-                border: 1px solid rgba(255, 255, 255, 0.4);
-            }
-            QPushButton:hover {
-                background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
-                    stop:0 #98f2ff, stop:0.53 #cab9ff, stop:1 #fface2);
-            }
-            QPushButton:pressed {
-                padding-top: 11px;
-            }
-            """
-        )
-        choose_button.clicked.connect(self.choose_directory)
-
+        # Footer: progress + stats + hints --------------------------------
         self.progress_bar = QtWidgets.QProgressBar()
-        self.progress_bar.setFixedHeight(10)
-        self.progress_bar.setFixedWidth(260)
         self.progress_bar.setTextVisible(False)
+        self.progress_bar.setFixedHeight(6)
 
-        self.progress_label = QtWidgets.QLabel("0 / 0 images sorted")
-        self.progress_label.setStyleSheet(f"color: {PALETTE['text_secondary']}; font-size: 12px; font-weight: 600;")
+        self.progress_label = QtWidgets.QLabel("0 / 0 sorted")
+        self.progress_label.setObjectName("metaLabel")
 
-        # -- live stat counters ----------------------------------------
-        self.stat_kept_label = QtWidgets.QLabel("\U0001F4C1 0 kept")
+        self.stat_kept_label = QtWidgets.QLabel("0 kept")
         self.stat_kept_label.setStyleSheet(
-            f"color: {PALETTE['keep']}; font-size: 11px; font-weight: 700; background: transparent;"
+            f"color: {PALETTE['keep']}; font-size: 11px; font-weight: 700;"
         )
-        self.stat_deleted_label = QtWidgets.QLabel("\U0001F5D1 0 deleted")
+        self.stat_deleted_label = QtWidgets.QLabel("0 deleted")
         self.stat_deleted_label.setStyleSheet(
-            f"color: {PALETTE['delete']}; font-size: 11px; font-weight: 700; background: transparent;"
+            f"color: {PALETTE['delete']}; font-size: 11px; font-weight: 700;"
         )
-        self.stat_skipped_label = QtWidgets.QLabel("\u23ED 0 skipped")
+        self.stat_skipped_label = QtWidgets.QLabel("0 skipped")
         self.stat_skipped_label.setStyleSheet(
-            f"color: {PALETTE['skip']}; font-size: 11px; font-weight: 700; background: transparent;"
+            f"color: {PALETTE['skip']}; font-size: 11px; font-weight: 700;"
         )
+
+        hints = QtWidgets.QLabel(
+            "→ Keep    ← Delete    Space Skip    Ctrl+Z Undo    F Inspect    M Mute    O Open"
+        )
+        hints.setObjectName("hintLabel")
 
         stats_row = QtWidgets.QHBoxLayout()
         stats_row.setSpacing(14)
+        stats_row.addWidget(self.progress_label)
+        stats_row.addSpacing(10)
         stats_row.addWidget(self.stat_kept_label)
         stats_row.addWidget(self.stat_deleted_label)
         stats_row.addWidget(self.stat_skipped_label)
+        stats_row.addStretch()
+        stats_row.addWidget(hints)
 
-        progress_layout = QtWidgets.QVBoxLayout()
-        progress_layout.setSpacing(4)
-        progress_layout.setContentsMargins(0, 0, 0, 0)
-        progress_layout.setAlignment(QtCore.Qt.AlignRight | QtCore.Qt.AlignVCenter)
-        progress_layout.addWidget(self.progress_bar)
-        progress_layout.addWidget(self.progress_label)
-        progress_layout.addLayout(stats_row)
-
-        footer_layout = QtWidgets.QHBoxLayout()
-        footer_layout.setSpacing(14)
-        footer_layout.addWidget(choose_button)
-        footer_layout.addStretch()
-        footer_layout.addLayout(progress_layout)
-
-        panel = QtWidgets.QFrame()
-        panel.setObjectName("windowPanel")
-        panel_layout = QtWidgets.QVBoxLayout(panel)
-        panel_layout.setContentsMargins(16, 14, 16, 14)
-        panel_layout.setSpacing(12)
-        panel_layout.addWidget(chrome)
-        panel_layout.addLayout(header_row)
-        panel_layout.addWidget(self.image_card, stretch=1)
-        panel_layout.addWidget(info_strip)
-        panel_layout.addLayout(controls_layout)
-        panel_layout.addWidget(self.finish_button)
-        panel_layout.addLayout(footer_layout)
-
-        main_layout = QtWidgets.QVBoxLayout(self)
-        main_layout.setContentsMargins(22, 20, 22, 20)
-        main_layout.addWidget(panel)
+        # Root layout -----------------------------------------------------
+        root = QtWidgets.QVBoxLayout(self)
+        root.setContentsMargins(22, 18, 22, 16)
+        root.setSpacing(12)
+        root.addLayout(top_bar)
+        root.addWidget(self.deck, stretch=1)
+        root.addWidget(meta_strip)
+        root.addLayout(actions_row)
+        root.addWidget(self.finish_button)
+        root.addWidget(self.progress_bar)
+        root.addLayout(stats_row)
 
         self.keep_button.clicked.connect(self.keep_current)
         self.delete_button.clicked.connect(self.delete_current)
         self.skip_button.clicked.connect(self.skip_current)
         self.undo_button.clicked.connect(self.undo_last)
 
+        self.toast = Toast(self)
+
         self.update_controls(False)
+
+    def _round_button(self, glyph, color, hover, diameter, tooltip):
+        button = QtWidgets.QPushButton(glyph)
+        button.setCursor(QtCore.Qt.PointingHandCursor)
+        button.setToolTip(tooltip)
+        button.setStyleSheet(round_action_style(color, hover, diameter))
+        return button
 
     def _connect_shortcuts(self):
         QtWidgets.QShortcut(QtGui.QKeySequence("Right"), self, activated=self.keep_current)
         QtWidgets.QShortcut(QtGui.QKeySequence("Left"), self, activated=self.delete_current)
         QtWidgets.QShortcut(QtGui.QKeySequence("Space"), self, activated=self.skip_current)
         QtWidgets.QShortcut(QtGui.QKeySequence("Ctrl+Z"), self, activated=self.undo_last)
+        QtWidgets.QShortcut(QtGui.QKeySequence("F"), self, activated=self.open_fullscreen)
+        QtWidgets.QShortcut(QtGui.QKeySequence("M"), self, activated=self.toggle_mute)
+        QtWidgets.QShortcut(QtGui.QKeySequence("O"), self, activated=self.choose_directory)
+        QtWidgets.QShortcut(QtGui.QKeySequence("R"), self, activated=self.resume_last_folder)
+
+    # -- status / welcome -----------------------------------------------
+
+    def _set_status(self, text: str, tone: str):
+        styles = {
+            "info": f"background: {PALETTE['surface']};",
+            "active": "background: rgba(91, 140, 255, 0.18); border-color: rgba(91, 140, 255, 0.55);",
+            "success": "background: rgba(45, 212, 119, 0.16); border-color: rgba(45, 212, 119, 0.55);",
+            "error": "background: rgba(244, 81, 108, 0.16); border-color: rgba(244, 81, 108, 0.55);",
+        }
+        self.status_chip.setText(text)
+        self.status_chip.setStyleSheet(styles.get(tone, styles["info"]))
+
+    def _show_welcome(self):
+        hint = WELCOME_HINT
+        last_dir = self.settings.value("session/last_dir", "", str)
+        if last_dir and os.path.isdir(last_dir):
+            hint += f"\nPress  R  to resume “{os.path.basename(last_dir)}”"
+        self.deck.set_message(WELCOME_MESSAGE, hint)
+
+    # -- image loading ------------------------------------------------------
+
+    def _load_pixmap(self, path: str, max_dim: int = MAX_DISPLAY_DIM):
+        key = (path, max_dim)
+        cached = self._pixmap_cache.get(key)
+        if cached is not None:
+            return cached
+        reader = QtGui.QImageReader(path)
+        reader.setAutoTransform(True)
+        size = reader.size()
+        if size.isValid() and (size.width() > max_dim or size.height() > max_dim):
+            size.scale(max_dim, max_dim, QtCore.Qt.KeepAspectRatio)
+            reader.setScaledSize(size)
+        image = reader.read()
+        pixmap = QtGui.QPixmap.fromImage(image) if not image.isNull() else QtGui.QPixmap()
+        if len(self._pixmap_cache) > 8:
+            self._pixmap_cache.clear()
+        self._pixmap_cache[key] = pixmap
+        return pixmap
+
+    def _upcoming_pixmaps(self):
+        if not self.backend:
+            return []
+        out = []
+        for offset in (1, 2):
+            path = self.backend.get_image(self.current_index + offset)
+            if path:
+                pixmap = self._load_pixmap(path, MAX_PREVIEW_DIM)
+                if not pixmap.isNull():
+                    out.append(pixmap)
+        return out
+
+    def _set_meta_for(self, path: str):
+        parts = []
+        try:
+            stat = os.stat(path)
+            pixmap = self._pixmap_cache.get((path, MAX_DISPLAY_DIM))
+            reader = QtGui.QImageReader(path)
+            size = reader.size()
+            if size.isValid():
+                parts.append(f"{size.width()} × {size.height()} px")
+            elif pixmap is not None and not pixmap.isNull():
+                parts.append(f"{pixmap.width()} × {pixmap.height()} px")
+            parts.append(human_size(stat.st_size))
+            parts.append(datetime.fromtimestamp(stat.st_mtime).strftime("%b %d, %Y"))
+        except OSError:
+            pass
+        if self.backend:
+            position = self.backend.processed_count() + 1
+            parts.append(f"{position} of {self.backend.total_images}")
+        self.meta_label.setText("   ·   ".join(parts))
+
+    # -- directory handling ---------------------------------------------
 
     def choose_directory(self):
         directory = QtWidgets.QFileDialog.getExistingDirectory(self, "Select Image Directory")
         if not directory:
             return
+        self.load_directory(directory)
 
+    def resume_last_folder(self):
+        last_dir = self.settings.value("session/last_dir", "", str)
+        if last_dir and os.path.isdir(last_dir):
+            self.load_directory(last_dir)
+
+    def load_directory(self, directory: str):
         self.backend = ImageBackend(directory)
         self.history.clear()
         self.current_index = -1
@@ -726,11 +438,47 @@ class ImageSwiper(QtWidgets.QWidget):
         self.kept_count = 0
         self.deleted_count = 0
         self.skipped_count = 0
-        self.action_label.setText("Last action: none yet.")
+        self._pixmap_cache.clear()
+        self.action_label.setText("No actions yet.")
         self.finish_button.hide()
+        self.folder_chip.setText(os.path.basename(directory) or directory)
+        self.settings.setValue("session/last_dir", directory)
         self._update_stats()
-        self._set_status(f"Scanning {os.path.basename(directory)} ...", "info")
-        QtCore.QTimer.singleShot(120, self.load_next_image)
+
+        total = self.backend.total_images
+        if total:
+            self.toast.popup(f"Loaded {total} photo(s)")
+            self.sound.play("open")
+        self._set_status("Ready", "active")
+        self.load_next_image()
+
+    # -- drag & drop -------------------------------------------------------
+
+    def _drop_dir(self, mime: QtCore.QMimeData):
+        if not mime.hasUrls():
+            return None
+        for url in mime.urls():
+            path = url.toLocalFile()
+            if path and os.path.isdir(path):
+                return path
+        return None
+
+    def dragEnterEvent(self, event):
+        if self._drop_dir(event.mimeData()):
+            event.acceptProposedAction()
+            self.deck.set_drop_highlight(True)
+
+    def dragLeaveEvent(self, event):
+        self.deck.set_drop_highlight(False)
+
+    def dropEvent(self, event):
+        self.deck.set_drop_highlight(False)
+        directory = self._drop_dir(event.mimeData())
+        if directory:
+            event.acceptProposedAction()
+            self.load_directory(directory)
+
+    # -- core flow -----------------------------------------------------------
 
     def load_next_image(self, advance_index=True):
         if not self.backend:
@@ -742,30 +490,47 @@ class ImageSwiper(QtWidgets.QWidget):
         while True:
             img_path = self.backend.get_image(self.current_index)
             if not img_path:
-                self.image_card.set_message("\U0001F389 All images sorted!")
-                self._set_status("Complete", "success")
-                self.file_label.clear()
-                self.update_progress()
-                self.update_controls(False)
-                self.finish_button.show()
-                self.sound.play("finish")
+                self._on_session_complete()
                 return
 
-            pixmap = QtGui.QPixmap(img_path)
+            pixmap = self._load_pixmap(img_path)
             if not pixmap.isNull():
                 self.current_path = img_path
-                self._apply_pixmap(pixmap)
+                self.deck.set_image(pixmap)
+                self.deck.set_upcoming(self._upcoming_pixmaps())
                 self.file_label.setText(os.path.basename(img_path))
+                self._set_meta_for(img_path)
                 self._set_status("Ready", "active")
                 self.update_progress()
                 self.update_controls(True)
                 return
 
-            self.action_label.setText(f"Skipped unreadable file: {os.path.basename(img_path)}")
+            self.action_label.setText(
+                f"Skipped unreadable file: {os.path.basename(img_path)}"
+            )
             self.current_index += 1
 
-    def _apply_pixmap(self, pixmap: QtGui.QPixmap):
-        self.image_card.set_image(pixmap)
+    def _on_session_complete(self):
+        self.current_path = None
+        summary = (
+            f"{self.kept_count} kept · {self.deleted_count} deleted · "
+            f"{self.skipped_count} skipped"
+        )
+        self.deck.set_message("All photos sorted 🎉", summary)
+        self._set_status("Complete", "success")
+        self.file_label.clear()
+        self.meta_label.setText(summary)
+        self.update_progress()
+        self.update_controls(False)
+        self.finish_button.show()
+        self.sound.play("finish")
+        self._celebrate()
+
+    def _on_deck_swiped(self, direction: str):
+        if direction == "keep":
+            self.keep_current()
+        elif direction == "delete":
+            self.delete_current()
 
     def keep_current(self):
         if not self.backend or not self.current_path:
@@ -777,9 +542,10 @@ class ImageSwiper(QtWidgets.QWidget):
             return
         self.history.append(("keep", dest))
         self.kept_count += 1
-        self.action_label.setText(f"Last action: kept {os.path.basename(dest)}")
-        self._flash_card(PALETTE["keep"])
-        self._show_reaction("\U0001F60A")
+        name = os.path.basename(dest)
+        self.action_label.setText(f"Kept {name}")
+        self.deck.fly_out("keep")
+        self.toast.popup(f"♥ Kept {name}")
         self.sound.play("keep")
         self._update_stats()
         self.current_index -= 1
@@ -795,9 +561,10 @@ class ImageSwiper(QtWidgets.QWidget):
             return
         self.history.append(("delete", dest))
         self.deleted_count += 1
-        self.action_label.setText(f"Last action: deleted {os.path.basename(dest)}")
-        self._flash_card(PALETTE["delete"])
-        self._show_reaction("\U0001F5D1\uFE0F")
+        name = os.path.basename(dest)
+        self.action_label.setText(f"Deleted {name}")
+        self.deck.fly_out("delete")
+        self.toast.popup(f"✕ Deleted {name}")
         self.sound.play("delete")
         self._update_stats()
         self.current_index -= 1
@@ -807,8 +574,8 @@ class ImageSwiper(QtWidgets.QWidget):
         if not self.backend or not self.current_path:
             return
         self.skipped_count += 1
-        self.action_label.setText(f"Last action: skipped {os.path.basename(self.current_path)}")
-        self._show_reaction("\u23ED\uFE0F")
+        self.action_label.setText(f"Skipped {os.path.basename(self.current_path)}")
+        self.deck.fly_out("skip")
         self.sound.play("skip")
         self._update_stats()
         self.load_next_image()
@@ -829,24 +596,37 @@ class ImageSwiper(QtWidgets.QWidget):
         idx = self.backend.index_of_image(restored)
         if idx >= 0:
             self.current_index = idx - 1
-        self.action_label.setText(f"Last action: undo {action}")
+        self.action_label.setText(f"Undid {action}: {os.path.basename(restored)}")
         self._set_status("Undo complete", "active")
-        self._show_reaction("\u21A9\uFE0F")
+        self.toast.popup(f"↺ Undid {action}")
         self.sound.play("undo")
         self._update_stats()
         self.finish_button.hide()
         self.load_next_image()
 
+    # -- progress & stats -----------------------------------------------
+
     def update_progress(self):
         if not self.backend:
             self.progress_bar.setValue(0)
-            self.progress_label.setText("0 / 0 images sorted")
+            self.progress_label.setText("0 / 0 sorted")
             return
         total = self.backend.total_images
         processed = self.backend.processed_count()
         percent = int((processed / total) * 100) if total else 0
-        self.progress_bar.setValue(percent)
-        self.progress_label.setText(f"{processed} / {total} images sorted")
+        self._animate_progress(percent)
+        self.progress_label.setText(f"{processed} / {total} sorted")
+
+    def _animate_progress(self, value: int):
+        if self._progress_anim is not None:
+            self._progress_anim.stop()
+        anim = QtCore.QPropertyAnimation(self.progress_bar, b"value")
+        anim.setDuration(260)
+        anim.setStartValue(self.progress_bar.value())
+        anim.setEndValue(value)
+        anim.setEasingCurve(QtCore.QEasingCurve.OutCubic)
+        anim.start()
+        self._progress_anim = anim
 
     def update_controls(self, enabled):
         has_images = bool(enabled and self.backend and self.backend.remaining_count() > 0)
@@ -854,42 +634,52 @@ class ImageSwiper(QtWidgets.QWidget):
         self.delete_button.setEnabled(has_images)
         self.skip_button.setEnabled(has_images)
         self.undo_button.setEnabled(bool(self.history))
-
-    # -- visual / audio helpers ----------------------------------------
+        self.deck.set_interactive(has_images)
 
     def _update_stats(self):
-        self.stat_kept_label.setText(f"\U0001F4C1 {self.kept_count} kept")
-        self.stat_deleted_label.setText(f"\U0001F5D1 {self.deleted_count} deleted")
-        self.stat_skipped_label.setText(f"\u23ED {self.skipped_count} skipped")
+        self.stat_kept_label.setText(f"{self.kept_count} kept")
+        self.stat_deleted_label.setText(f"{self.deleted_count} deleted")
+        self.stat_skipped_label.setText(f"{self.skipped_count} skipped")
 
-    def _show_reaction(self, emoji: str):
-        """Float an emoji reaction over the image card."""
-        card_center = self.image_card.rect().center()
-        mapped = self.image_card.mapTo(self, card_center)
-        start = QtCore.QPoint(mapped.x() - 45, mapped.y() - 45)
-        FloatingReaction(self, emoji, start)
+    # -- extras -------------------------------------------------------------
 
-    _card_original_stylesheet: str = ""
+    def toggle_mute(self):
+        self.sound.set_muted(not self.sound.muted)
+        self.settings.setValue("sound/muted", self.sound.muted)
+        self.mute_button.setText(self._mute_glyph())
+        self.toast.popup("Sound off" if self.sound.muted else "Sound on")
 
-    def _flash_card(self, color: str):
-        """Briefly highlight the image-card border."""
-        if not self._card_original_stylesheet:
-            self._card_original_stylesheet = self.image_card.styleSheet()
-        flash = f"""
-        #imageCard {{
-            background: qlineargradient(spread:pad, x1:0, y1:0, x2:1, y2:1,
-                stop:0 rgba(31, 17, 64, 0.97), stop:0.46 rgba(72, 45, 138, 0.94),
-                stop:1 rgba(36, 101, 170, 0.92));
-            border-radius: 22px;
-            border: 3px solid {color};
-        }}
-        """
-        self.image_card.setStyleSheet(flash)
-        QtCore.QTimer.singleShot(
-            280, lambda: self.image_card.setStyleSheet(self._card_original_stylesheet)
+    def _mute_glyph(self) -> str:
+        return "🔇" if self.sound.muted else "🔊"
+
+    def open_fullscreen(self):
+        if not self.current_path:
+            return
+        # Full resolution, but honor EXIF orientation so rotated JPEGs match
+        # the deck preview (which loads via QImageReader.setAutoTransform).
+        reader = QtGui.QImageReader(self.current_path)
+        reader.setAutoTransform(True)
+        image = reader.read()
+        if image.isNull():
+            return
+        pixmap = QtGui.QPixmap.fromImage(image)
+        if pixmap.isNull():
+            return
+        caption = (
+            f"{os.path.basename(self.current_path)}   ·   scroll to zoom · "
+            "drag to pan · double-click to reset · Esc to close"
         )
+        viewer = FullscreenViewer(self, pixmap, caption)
+        viewer.showFullScreen()
+        viewer.exec_()
 
-    # -- finish dialog -------------------------------------------------
+    def _celebrate(self):
+        center = self.deck.mapTo(self, self.deck.rect().center())
+        for i, emoji in enumerate(("✨", "🎉", "✨")):
+            offset = (i - 1) * 90
+            FloatingEmoji(self, emoji, QtCore.QPoint(center.x() + offset - 32, center.y()))
+
+    # -- finish dialog ----------------------------------------------------
 
     def _show_finish_dialog(self):
         if not self.backend:
@@ -911,18 +701,23 @@ class ImageSwiper(QtWidgets.QWidget):
             parts.append(f"{deleted_n} photo(s) permanently deleted")
         if restored_n:
             parts.append(f"{restored_n} photo(s) restored")
-        summary = " \u2022 ".join(parts) if parts else "No changes made."
+        summary = " · ".join(parts) if parts else "No changes made."
         self._set_status("Finished", "success")
         self.action_label.setText(summary)
-        self.image_card.set_message("\u2728  All done!  \u2728")
+        self.deck.set_message("All done ✨", summary)
         self.finish_button.hide()
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
+        if self.toast.isVisible():
+            self.toast._reposition()
 
 
 def main():
+    QtWidgets.QApplication.setAttribute(QtCore.Qt.AA_EnableHighDpiScaling, True)
+    QtWidgets.QApplication.setAttribute(QtCore.Qt.AA_UseHighDpiPixmaps, True)
     app = QtWidgets.QApplication(sys.argv)
+    app.setApplicationName("Photo Deleter")
     window = ImageSwiper()
     window.show()
     sys.exit(app.exec_())
