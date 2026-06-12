@@ -6,6 +6,18 @@ swipe-card mechanic from apps like Tinder and the calm, high-contrast styling of
 modern product UIs — so triaging hundreds of photos feels quick and satisfying
 instead of tedious.
 
+## Demo
+
+![Photo Deleter swipe-to-sort demo](docs/demo.gif)
+
+> Drag right to keep, left to delete — the card tilts and stamps **KEEP** / **DELETE**
+> as you go, with the next photos previewed in the stack behind it.
+
+![Photo Deleter interface](docs/screenshot.png)
+
+<sub>The demo assets are generated from the real UI — regenerate them with
+`QT_QPA_PLATFORM=offscreen python scripts/make_demo.py`.</sub>
+
 ## Highlights
 
 - **Swipe to sort** — drag the photo card **right to keep**, **left to delete**.
