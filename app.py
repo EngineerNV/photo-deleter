@@ -655,7 +655,14 @@ class ImageSwiper(QtWidgets.QWidget):
     def open_fullscreen(self):
         if not self.current_path:
             return
-        pixmap = QtGui.QPixmap(self.current_path)  # full resolution for inspection
+        # Full resolution, but honor EXIF orientation so rotated JPEGs match
+        # the deck preview (which loads via QImageReader.setAutoTransform).
+        reader = QtGui.QImageReader(self.current_path)
+        reader.setAutoTransform(True)
+        image = reader.read()
+        if image.isNull():
+            return
+        pixmap = QtGui.QPixmap.fromImage(image)
         if pixmap.isNull():
             return
         caption = (
